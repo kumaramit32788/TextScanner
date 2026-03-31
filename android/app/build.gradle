@@ -77,9 +77,12 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
+    // Keep applicationId as the new Play Store ID,
+    // but use the original namespace so generated BuildConfig
+    // matches what React Native's entrypoint expects.
     namespace "com.ocrapp"
     defaultConfig {
-        applicationId "com.ocrapp"
+        applicationId "com.amit.textscanner"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

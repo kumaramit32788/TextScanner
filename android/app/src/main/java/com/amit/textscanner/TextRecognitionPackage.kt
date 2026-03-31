@@ -1,4 +1,4 @@
-package com.ocrapp
+package com.amit.textscanner
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

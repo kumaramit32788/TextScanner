@@ -1,4 +1,4 @@
-package com.ocrapp
+package com.amit.textscanner
 
 import android.app.Application
 import com.facebook.react.PackageList
@@ -7,7 +7,7 @@ import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 
-import com.ocrapp.TextRecognitionPackage
+import com.amit.textscanner.TextRecognitionPackage
 
 class MainApplication : Application(), ReactApplication {
 

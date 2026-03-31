@@ -1,4 +1,4 @@
-package com.ocrapp
+package com.amit.textscanner
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

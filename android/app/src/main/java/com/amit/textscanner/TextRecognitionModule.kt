@@ -1,4 +1,4 @@
-package com.ocrapp
+package com.amit.textscanner
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
