@@ -1,22 +1,12 @@
 
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Dimensions,
-  FlatList,
   Image,
-  Modal,
   PermissionsAndroid,
   Platform,
-  Pressable,
-  SafeAreaView,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
   ToastAndroid,
-  View,
 } from 'react-native';
 import DocumentScanner, {
   ScanDocumentResponseStatus,
@@ -27,9 +17,18 @@ import RNPhotoManipulator, {
   MimeType,
   RotationMode,
 } from 'react-native-photo-manipulator';
-import {MaterialIcons} from '@react-native-vector-icons/material-icons';
-import Swipeable from 'react-native-gesture-handler/Swipeable';
+import ShareFile from 'react-native-share';
+import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import SelectedImageScreen from './SelectedImageScreen';
+import {formatLastSavedPath, toSafeFileName} from './AppContent.helpers';
+import DashboardScreen, {GroupedSavedItem} from './DashboardScreen';
+
+type AppContentStackParamList = {
+  Dashboard: undefined;
+  Preview: undefined;
+};
+
+const AppContentStack = createNativeStackNavigator<AppContentStackParamList>();
 
 function AppContent({isDarkMode}: {isDarkMode: boolean}) {
     const rowUsableWidth = Dimensions.get('window').width - 32;
@@ -125,7 +124,8 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
     useEffect(() => {
       loadSavedImages();
     }, [loadSavedImages]);
-  
+
+
     const captureAndSaveDocument = async () => {
       setError('');
       setSuccess('');
@@ -175,6 +175,70 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
         );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Failed to scan and save document';
+        setError(message);
+      } finally {
+        setScanning(false);
+      }
+    };
+
+    const captureAndAppendToCurrentSelection = async () => {
+      setError('');
+      setSuccess('');
+
+      const hasPermission = await requestAndroidCameraPermission();
+      if (!hasPermission) {
+        setError('Camera permission denied.');
+        return;
+      }
+
+      try {
+        setScanning(true);
+        const {scannedImages, status} = await DocumentScanner.scanDocument({
+          maxNumDocuments: 20,
+          croppedImageQuality: 100,
+        });
+
+        if (status === ScanDocumentResponseStatus.Cancel) {
+          return;
+        }
+
+        const sourcePaths = scannedImages?.filter(Boolean) ?? [];
+        if (sourcePaths.length === 0) {
+          setError('No document captured.');
+          return;
+        }
+
+        const dirExists = await RNFS.exists(scansDir);
+        if (!dirExists) {
+          await RNFS.mkdir(scansDir);
+        }
+
+        const currentBatchMatch = selectedImages[0]?.match(/scan-(\d+)-(\d+)\.(jpg|jpeg|png)$/i);
+        const batchId = currentBatchMatch?.[1] ?? String(Date.now());
+        const highestIndexInSelection = selectedImages.reduce((maxIndex, imageUri) => {
+          const match = imageUri.match(/scan-\d+-(\d+)\.(jpg|jpeg|png)$/i);
+          const index = Number(match?.[1] ?? 0);
+          return Math.max(maxIndex, index);
+        }, 0);
+
+        const savedPaths: string[] = [];
+        for (const [index, sourcePath] of sourcePaths.entries()) {
+          const normalizedSourcePath = sourcePath.replace('file://', '');
+          const destPath = `${scansDir}/scan-${batchId}-${highestIndexInSelection + index + 1}.jpg`;
+          await RNFS.copyFile(normalizedSourcePath, destPath);
+          savedPaths.push(`file://${destPath}`);
+        }
+
+        setSelectedImages(prev => [...prev, ...savedPaths]);
+        setSelectedImageIndex(selectedImages.length);
+        setSelectedImageRotation(0);
+        setLastSavedPath(savedPaths[savedPaths.length - 1]);
+        await loadSavedImages();
+        setSuccess(
+          `${savedPaths.length} page${savedPaths.length > 1 ? 's' : ''} added to this scan.`,
+        );
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : 'Failed to add new capture';
         setError(message);
       } finally {
         setScanning(false);
@@ -394,19 +458,56 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
     const shareSelected = async (imagePath: string) => {
       try {
         setError('');
-        let preferredUri = imagePath;
+        let sourcePdfPath = '';
         if (lastSavedPath && lastSavedPath.toLowerCase().endsWith('.pdf')) {
-          preferredUri = lastSavedPath;
-        } else if (selectedImageRotation !== 0) {
-          const rotatedPath = await createRotatedImageIfNeeded(
-            imagePath,
-            selectedImageRotation,
-          );
-          preferredUri = `file://${rotatedPath}`;
+          const resolvedSavedPdfPath = await resolveExistingPath(lastSavedPath);
+          if (await RNFS.exists(resolvedSavedPdfPath)) {
+            sourcePdfPath = resolvedSavedPdfPath;
+          }
         }
-        await Share.share({
-          message: preferredUri,
-          url: preferredUri,
+
+        if (!sourcePdfPath) {
+          const sourceImages = selectedImages.length > 0 ? selectedImages : [imagePath];
+          const preparedImagePaths = await Promise.all(
+            sourceImages.map((path, index) =>
+              index === selectedImageIndex
+                ? createRotatedImageIfNeeded(path, selectedImageRotation)
+                : Promise.resolve(path.replace('file://', '')),
+            ),
+          );
+
+          const sharePdfName = `scan-share-${Date.now()}`;
+          const pdfParams: {
+            imagePaths: string[];
+            name: string;
+            paperSize?: 'A4' | 'Letter';
+          } = {
+            imagePaths: preparedImagePaths,
+            name: sharePdfName,
+          };
+
+          if (exportSize !== 'ORIGINAL') {
+            pdfParams.paperSize = exportSize;
+          }
+
+          const {filePath} = await createPdf(pdfParams);
+          const resolvedPdfPath = await resolveExistingPath(filePath);
+          sourcePdfPath = resolvedPdfPath;
+          setLastSavedPath(`file://${resolvedPdfPath}`);
+        }
+
+        const shareablePdfPath = `${RNFS.CachesDirectoryPath}/scan-share-${Date.now()}.pdf`;
+        if (await RNFS.exists(shareablePdfPath)) {
+          await RNFS.unlink(shareablePdfPath);
+        }
+        await RNFS.copyFile(sourcePdfPath, shareablePdfPath);
+
+        await ShareFile.open({
+          url: `file://${shareablePdfPath}`,
+          type: 'application/pdf',
+          filename: 'scanned-document',
+          failOnCancel: false,
+          title: 'Share PDF',
         });
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Failed to share file';
@@ -468,16 +569,7 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
     };
 
     const groupedSavedItems = useMemo(() => {
-      const groups = new Map<
-        string,
-        {
-          id: string;
-          coverUri: string;
-          images: string[];
-          count: number;
-          name: string;
-        }
-      >();
+      const groups = new Map<string, GroupedSavedItem>();
       const orderedIds: string[] = [];
 
       for (const path of savedImages) {
@@ -561,17 +653,34 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
       ]);
     };
 
-    const openPreviewItem = (coverUri: string) => {
+    const openPreviewItem = (
+      coverUri: string,
+      preferredName?: string,
+      navigateToPreview?: () => void,
+    ) => {
       const {images, selectedIndex} = getBatchGroup(coverUri);
       setSelectedImages(images);
       setSelectedImageIndex(selectedIndex);
       setSelectedImageRotation(0);
-      setExportFileName(`scan-${Date.now()}`);
+      const normalizedPreferredName = preferredName ? toSafeFileName(preferredName) : '';
+      setExportFileName(normalizedPreferredName || `scan-${Date.now()}`);
       setExportSize('A4');
+      navigateToPreview?.();
     };
 
-    if (selectedImages.length > 0) {
+    const closePreviewState = () => {
+      setSelectedImages([]);
+      setSelectedImageIndex(0);
+      setSelectedImageRotation(0);
+      setExportModalVisible(false);
+    };
+
+    const renderPreviewScreen = (navigation: {goBack: () => void}) => {
       const currentImage = selectedImages[selectedImageIndex] ?? selectedImages[0];
+      if (!currentImage) {
+        return null;
+      }
+
       return (
         <SelectedImageScreen
           imageUri={currentImage}
@@ -581,9 +690,8 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
           savingToDevice={savingToDevice}
           rotation={selectedImageRotation}
           onClose={() => {
-            setSelectedImages([]);
-            setSelectedImageIndex(0);
-            setSelectedImageRotation(0);
+            closePreviewState();
+            navigation.goBack();
           }}
           onNextImage={() => {
             setSelectedImageRotation(0);
@@ -597,6 +705,8 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
             setSelectedImageRotation(prevRotation => (prevRotation + 90) % 360)
           }
           onShare={() => shareSelected(currentImage)}
+          onAddCapture={captureAndAppendToCurrentSelection}
+          capturing={scanning}
           exportModalVisible={exportModalVisible}
           onOpenExportModal={() => openExportModal(selectedImages)}
           onCloseExportModal={() => setExportModalVisible(false)}
@@ -611,368 +721,55 @@ function AppContent({isDarkMode}: {isDarkMode: boolean}) {
           onSave={confirmCustomExport}
         />
       );
-    }
+    };
+
+    const renderDashboardScreen = (navigation: {navigate: (name: 'Preview') => void}) => (
+      <DashboardScreen
+        isDarkMode={isDarkMode}
+        groupedSavedItems={groupedSavedItems}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        swipeThreshold={swipeThreshold}
+        swipeActionWidth={swipeActionWidth}
+        onDeleteGroup={handleDeleteGroup}
+        onOpenRename={handleOpenRename}
+        onOpenPreview={(coverUri, preferredName) =>
+          openPreviewItem(coverUri, preferredName, () => navigation.navigate('Preview'))
+        }
+        renameModalVisible={renameModalVisible}
+        onCloseRenameModal={() => setRenameModalVisible(false)}
+        renameValue={renameValue}
+        onChangeRenameValue={setRenameValue}
+        onConfirmRename={handleConfirmRename}
+        scanning={scanning}
+        onCapture={captureAndSaveDocument}
+        success={success}
+        error={error}
+        lastSavedPath={lastSavedPath}
+        formatLastSavedPath={formatLastSavedPath}
+        toDisplayUri={toDisplayUri}
+      />
+    );
   
     return (
-      <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
-        <FlatList
-          data={groupedSavedItems}
-          keyExtractor={item => item.id}
-          numColumns={1}
-          contentContainerStyle={styles.content}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          ListHeaderComponent={
-            <>
-              <Text style={[styles.title, isDarkMode && styles.titleDark]}>
-                Document Scanner
-              </Text>
-              <Text style={[styles.label, isDarkMode && styles.textDark]}>
-                Captured documents are saved locally and listed below.
-              </Text>
-              {lastSavedPath ? (
-                <Text style={[styles.pathText, isDarkMode && styles.textDark]}>
-                  Last saved: {lastSavedPath}
-                </Text>
-              ) : null}
-              {success ? <Text style={styles.success}>{success}</Text> : null}
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-            </>
-          }
-          ListEmptyComponent={
-            <View style={[styles.previewBox, isDarkMode && styles.previewBoxDark]}>
-              <Text style={[styles.previewPlaceholder, isDarkMode && styles.textDark]}>
-                No saved documents yet. Tap SCAN to add your first one.
-              </Text>
-            </View>
-          }
-          renderItem={({item}) => (
-            <Swipeable
-              rightThreshold={swipeThreshold}
-              overshootRight={false}
-              friction={2}
-              renderRightActions={() => (
-                <View style={[styles.swipeRightActions, {width: swipeActionWidth}]}>
-                  <Pressable
-                    style={styles.swipeDeleteAction}
-                    onPress={() => handleDeleteGroup(item.id, item.images)}>
-                    <MaterialIcons name="delete" size={22} color="#fff" />
-                    <Text style={styles.swipeDeleteText}>Delete</Text>
-                  </Pressable>
-                </View>
-              )}>
-              <View style={[styles.gridItem, isDarkMode && styles.previewBoxDark]}>
-                <Pressable style={styles.gridImagePressable} onPress={() => openPreviewItem(item.coverUri)}>
-                <Image
-                  source={{uri: toDisplayUri(item.coverUri)}}
-                  style={styles.gridImage}
-                  resizeMode="cover"
-                />
-                  {item.count > 1 ? (
-                    <View style={styles.multiBadge}>
-                      <Text style={styles.multiBadgeText}>{item.count}</Text>
-                    </View>
-                  ) : null}
-                </Pressable>
-                <View style={styles.itemRightPanel}>
-                  <View style={styles.itemMeta}>
-                    <Text style={[styles.itemName, isDarkMode && styles.textDark]} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.itemCount}>
-                      {item.count}/{item.count} image{item.count > 1 ? 's' : ''}
-                    </Text>
-                  </View>
-                  <View style={styles.itemActions}>
-                    <Pressable
-                      style={[styles.iconActionButton, styles.actionEdit]}
-                      onPress={() => handleOpenRename(item.id, item.name)}>
-                      <MaterialIcons name="drive-file-rename-outline" size={18} color="#fff" />
-                      <Text style={styles.actionText}>Rename</Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.iconActionButton, styles.actionOpen]}
-                      onPress={() => openPreviewItem(item.coverUri)}>
-                      <MaterialIcons name="edit" size={18} color="#fff" />
-                      <Text style={styles.actionText}>Edit</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            </Swipeable>
-          )}
-        />
-        <Modal
-          visible={renameModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setRenameModalVisible(false)}>
-          <View style={styles.modalBackdrop}>
-            <View style={[styles.modalCard, isDarkMode && styles.previewBoxDark]}>
-              <Text style={[styles.modalTitle, isDarkMode && styles.textDark]}>Rename scan</Text>
-              <TextInput
-                value={renameValue}
-                onChangeText={setRenameValue}
-                style={[styles.renameInput, isDarkMode && styles.renameInputDark]}
-                placeholder="Enter name"
-                placeholderTextColor="#9ca3af"
-              />
-              <View style={styles.modalActions}>
-                <Pressable style={[styles.actionButton, styles.actionEdit]} onPress={() => setRenameModalVisible(false)}>
-                  <Text style={styles.actionText}>Cancel</Text>
-                </Pressable>
-                <Pressable style={[styles.actionButton, styles.actionDelete]} onPress={handleConfirmRename}>
-                  <Text style={styles.actionText}>Save</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-  
-        <View style={styles.fabGroup}>
-          <Pressable
-            style={[styles.fabPrimary, scanning && styles.buttonDisabled]}
-            onPress={captureAndSaveDocument}
-            disabled={scanning}>
-            {scanning ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <MaterialIcons name="photo-camera" size={26} color="#fff" />
-            )}
-          </Pressable>
-        </View>
-  
-      </SafeAreaView>
+      <AppContentStack.Navigator
+        initialRouteName="Dashboard"
+        screenOptions={{headerShown: false, animation: 'slide_from_right'}}>
+        <AppContentStack.Screen name="Dashboard">
+          {({navigation}) => renderDashboardScreen(navigation)}
+        </AppContentStack.Screen>
+        <AppContentStack.Screen
+          name="Preview"
+          listeners={{
+            blur: () => {
+              closePreviewState();
+            },
+          }}>
+          {({navigation}) => renderPreviewScreen(navigation)}
+        </AppContentStack.Screen>
+      </AppContentStack.Navigator>
     );
   }
 
 
-const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: '#f3f4f6',
-    },
-    containerDark: {
-      backgroundColor: '#111827',
-    },
-    content: {
-      padding: 16,
-      gap: 12,
-      paddingBottom: 96,
-    },
-    gridRow: {
-      justifyContent: 'space-between',
-      marginBottom: 10,
-    },
-    title: {
-      fontSize: 28,
-      fontWeight: '700',
-      color: '#111827',
-    },
-    titleDark: {
-      color: '#f9fafb',
-    },
-    label: {
-      fontSize: 14,
-      color: '#374151',
-    },
-    buttonDisabled: {
-      opacity: 0.8,
-    },
-    previewBox: {
-      minHeight: 220,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      backgroundColor: '#ffffff',
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: 8,
-    },
-    previewBoxDark: {
-      borderColor: '#4b5563',
-      backgroundColor: '#1f2937',
-    },
-    previewPlaceholder: {
-      color: '#6b7280',
-      fontSize: 15,
-    },
-    grid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 10,
-    },
-    gridItem: {
-      width: '100%',
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      backgroundColor: '#fff',
-      flexDirection: 'row',
-      padding: 10,
-      alignItems: 'center',
-      gap: 10,
-    },
-    gridImage: {
-      width: '100%',
-      height: '100%',
-    },
-    gridImagePressable: {
-      width: 88,
-      height: 110,
-      borderRadius: 8,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-    },
-    multiBadge: {
-      position: 'absolute',
-      top: 6,
-      right: 6,
-      minWidth: 22,
-      height: 22,
-      borderRadius: 11,
-      backgroundColor: 'rgba(17,24,39,0.8)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 6,
-    },
-    multiBadgeText: {
-      color: '#fff',
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    itemRightPanel: {
-      flex: 1,
-      justifyContent: 'space-between',
-      minHeight: 110,
-    },
-    itemMeta: {
-      gap: 2,
-    },
-    itemName: {
-      color: '#111827',
-      fontSize: 13,
-      fontWeight: '700',
-    },
-    itemCount: {
-      color: '#6b7280',
-      fontSize: 12,
-    },
-    itemActions: {
-      flexDirection: 'row',
-      gap: 8,
-    },
-    iconActionButton: {
-      flex: 1,
-      borderRadius: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 6,
-      paddingVertical: 8,
-    },
-    actionButton: {
-      flex: 1,
-      borderRadius: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 8,
-    },
-    actionEdit: {
-      backgroundColor: '#2563eb',
-    },
-    actionDelete: {
-      backgroundColor: '#dc2626',
-    },
-    actionOpen: {
-      backgroundColor: '#059669',
-    },
-    actionText: {
-      color: '#fff',
-      fontWeight: '600',
-      fontSize: 12,
-    },
-    swipeDeleteAction: {
-      flex: 1,
-      marginVertical: 4,
-      marginLeft: 8,
-      borderRadius: 10,
-      backgroundColor: '#dc2626',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-    },
-    swipeRightActions: {
-      justifyContent: 'center',
-    },
-    swipeDeleteText: {
-      color: '#fff',
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    modalBackdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      justifyContent: 'center',
-      padding: 20,
-    },
-    modalCard: {
-      borderRadius: 12,
-      backgroundColor: '#fff',
-      padding: 12,
-      gap: 10,
-    },
-    modalTitle: {
-      color: '#111827',
-      fontSize: 16,
-      fontWeight: '700',
-    },
-    renameInput: {
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      color: '#111827',
-      backgroundColor: '#fff',
-    },
-    renameInputDark: {
-      borderColor: '#4b5563',
-      color: '#f9fafb',
-      backgroundColor: '#111827',
-    },
-    modalActions: {
-      flexDirection: 'row',
-      gap: 8,
-    },
-    pathText: {
-      color: '#4b5563',
-      fontSize: 12,
-    },
-    error: {
-      color: '#dc2626',
-    },
-    success: {
-      color: '#059669',
-    },
-    textDark: {
-      color: '#f9fafb',
-    },
-    fabGroup: {
-      position: 'absolute',
-      right: 16,
-      bottom: 24,
-      alignItems: 'center',
-    },
-    fabPrimary: {
-      width: 64,
-      height: 64,
-      borderRadius: 32,
-      backgroundColor: '#2563eb',
-      justifyContent: 'center',
-      alignItems: 'center',
-      elevation: 3,
-    },
-  });
   export default AppContent

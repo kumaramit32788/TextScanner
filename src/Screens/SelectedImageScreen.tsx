@@ -21,11 +21,13 @@ type SelectedImageScreenProps = {
   isDarkMode: boolean;
   savingToDevice: boolean;
   rotation: number;
+  capturing: boolean;
   onClose: () => void;
   onNextImage: () => void;
   onPreviousImage: () => void;
   onRotate: () => void;
   onShare: () => void;
+  onAddCapture: () => void;
   exportModalVisible: boolean;
   onOpenExportModal: () => void;
   onCloseExportModal: () => void;
@@ -47,11 +49,13 @@ function SelectedImageScreen({
   isDarkMode,
   savingToDevice,
   rotation,
+  capturing,
   onClose,
   onNextImage,
   onPreviousImage,
   onRotate,
   onShare,
+  onAddCapture,
   exportModalVisible,
   onOpenExportModal,
   onCloseExportModal,
@@ -65,6 +69,7 @@ function SelectedImageScreen({
   onExportSizeChange,
   onSave,
 }: SelectedImageScreenProps) {
+  const [controlsVisible, setControlsVisible] = React.useState(false);
   const hasMultiple = totalImages > 1;
   const canGoPrev = currentImageIndex > 0;
   const canGoNext = currentImageIndex < totalImages - 1;
@@ -72,6 +77,18 @@ function SelectedImageScreen({
   const displayImageUri = encodeURI(
     imageUri.startsWith('file://') ? imageUri : `file://${imageUri}`,
   );
+  const modalTitleStyle = [styles.modalTitle, isDarkMode ? styles.modalTitleDark : styles.modalTitleLight];
+  const rangeLabelStyle = [styles.rangeLabel, isDarkMode ? styles.rangeLabelDark : styles.rangeLabelLight];
+  const targetSizeTextStyle = [
+    styles.targetSizeText,
+    isDarkMode ? styles.targetSizeTextDark : styles.targetSizeTextLight,
+  ];
+  const fileNameInputStyle = [
+    styles.fileNameInput,
+    isDarkMode ? styles.fileNameInputDark : styles.fileNameInputLight,
+  ];
+  const optionLabelStyle = [styles.optionLabel, isDarkMode ? styles.optionLabelDark : styles.optionLabelLight];
+  const placeholderColor = isDarkMode ? '#9ca3af' : '#6b7280';
 
   const panResponder = React.useMemo(
     () =>
@@ -93,14 +110,24 @@ function SelectedImageScreen({
     [canGoNext, canGoPrev, hasMultiple, onNextImage, onPreviousImage],
   );
 
+  React.useEffect(() => {
+    if (!controlsVisible) {
+      return;
+    }
+    const timer = setTimeout(() => setControlsVisible(false), 2200);
+    return () => clearTimeout(timer);
+  }, [controlsVisible]);
+
   return (
     <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
-      <View style={[styles.card, isDarkMode && styles.cardDark]}>
-        <Pressable style={styles.closeButton} onPress={onClose}>
-          <MaterialIcons name="close" size={20} color="#fff" />
-        </Pressable>
+      <View style={styles.card}>
+        {controlsVisible ? (
+          <Pressable style={styles.closeButton} onPress={onClose}>
+            <MaterialIcons name="close" size={20} color="#fff" />
+          </Pressable>
+        ) : null}
         <View style={styles.imageWrap} {...panResponder.panHandlers}>
-          {hasMultiple ? (
+          {controlsVisible && hasMultiple ? (
             <Pressable
               style={[styles.navButton, styles.navLeft, !canGoPrev && styles.navDisabled]}
               onPress={onPreviousImage}
@@ -108,12 +135,16 @@ function SelectedImageScreen({
               <MaterialIcons name="chevron-left" size={24} color="#fff" />
             </Pressable>
           ) : null}
-          <Image
-            source={{uri: displayImageUri}}
-            style={[styles.image, {transform: [{rotate: `${rotation}deg`}]}]}
-            resizeMode="contain"
-          />
-          {hasMultiple ? (
+          <Pressable
+            onPress={() => setControlsVisible(prev => !prev)}
+            style={styles.imageTouchArea}>
+            <Image
+              source={{uri: displayImageUri}}
+              style={[styles.image, {transform: [{rotate: `${rotation}deg`}]}]}
+              resizeMode="contain"
+            />
+          </Pressable>
+          {controlsVisible && hasMultiple ? (
             <Pressable
               style={[styles.navButton, styles.navRight, !canGoNext && styles.navDisabled]}
               onPress={onNextImage}
@@ -122,31 +153,43 @@ function SelectedImageScreen({
             </Pressable>
           ) : null}
         </View>
-        {hasMultiple ? (
+        {controlsVisible && hasMultiple ? (
           <View style={styles.pageIndicator}>
             <Text style={styles.pageText}>
               {currentImageIndex + 1}/{totalImages}
             </Text>
           </View>
         ) : null}
-        <View style={styles.buttons}>
-          <Pressable style={[styles.iconButton, styles.rotate]} onPress={onRotate}>
-            <MaterialIcons name="rotate-right" size={22} color="#fff" />
-          </Pressable>
-          <Pressable style={[styles.iconButton, styles.share]} onPress={onShare}>
-            <MaterialIcons name="share" size={22} color="#fff" />
-          </Pressable>
-          <Pressable
-            style={[styles.iconButton, styles.primary]}
-            onPress={onOpenExportModal}
-            disabled={savingToDevice}>
-            {savingToDevice ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <MaterialIcons name="picture-as-pdf" size={22} color="#fff" />
-            )}
-          </Pressable>
-        </View>
+        {controlsVisible ? (
+          <View style={styles.buttons}>
+            <Pressable
+              style={[styles.iconButton, styles.add, capturing && styles.navDisabled]}
+              onPress={onAddCapture}
+              disabled={capturing}>
+              {capturing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <MaterialIcons name="add-a-photo" size={22} color="#fff" />
+              )}
+            </Pressable>
+            <Pressable style={[styles.iconButton, styles.rotate]} onPress={onRotate}>
+              <MaterialIcons name="rotate-right" size={22} color="#fff" />
+            </Pressable>
+            <Pressable style={[styles.iconButton, styles.share]} onPress={onShare}>
+              <MaterialIcons name="share" size={22} color="#fff" />
+            </Pressable>
+            <Pressable
+              style={[styles.iconButton, styles.primary]}
+              onPress={onOpenExportModal}
+              disabled={savingToDevice}>
+              {savingToDevice ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <MaterialIcons name="picture-as-pdf" size={22} color="#fff" />
+              )}
+            </Pressable>
+          </View>
+        ) : null}
       </View>
       <Modal
         visible={exportModalVisible}
@@ -155,17 +198,17 @@ function SelectedImageScreen({
         onRequestClose={onCloseExportModal}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, isDarkMode && styles.modalCardDark]}>
-            <Text style={styles.modalTitle}>Custom Export</Text>
+            <Text style={modalTitleStyle}>Custom Export</Text>
             <TextInput
               value={exportFileName}
               onChangeText={onExportFileNameChange}
               placeholder="PDF name"
-              placeholderTextColor="#9ca3af"
-              style={styles.fileNameInput}
+              placeholderTextColor={placeholderColor}
+              style={fileNameInputStyle}
               autoCapitalize="none"
               autoCorrect={false}
             />
-            <Text style={styles.rangeLabel}>
+            <Text style={rangeLabelStyle}>
               Size range: {exportMinSizeMb.toFixed(1)} MB - {exportMaxSizeMb.toFixed(1)} MB
             </Text>
             <View style={styles.sliderWrap}>
@@ -180,11 +223,11 @@ function SelectedImageScreen({
                 thumbTintColor="#60a5fa"
               />
             </View>
-            <Text style={styles.targetSizeText}>
+            <Text style={targetSizeTextStyle}>
               Target: {exportTargetSizeMb.toFixed(1)} MB
             </Text>
             <View style={styles.optionRow}>
-              <Text style={styles.optionLabel}>Size</Text>
+              <Text style={optionLabelStyle}>Size</Text>
               <View style={styles.optionButtons}>
                 {([
                   {label: 'A4', value: 'A4'},
@@ -201,6 +244,7 @@ function SelectedImageScreen({
                     <Text
                       style={[
                         styles.optionButtonText,
+                        !isDarkMode && styles.optionButtonTextLight,
                         exportSize === option.value && styles.optionButtonTextActive,
                       ]}>
                       {option.label}
@@ -230,28 +274,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
   },
   containerDark: {
     backgroundColor: '#0b1220',
   },
   card: {
     width: '100%',
-    maxWidth: 420,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    padding: 12,
+    height: '100%',
+    backgroundColor: '#000',
+    padding: 0,
     flex: 1,
-    marginVertical: 16,
-  },
-  cardDark: {
-    borderColor: '#4b5563',
-    borderWidth: 1,
-    backgroundColor: '#1f2937',
   },
   imageWrap: {
     flex: 1,
     minHeight: 0,
+    justifyContent: 'center',
+  },
+  imageTouchArea: {
+    flex: 1,
     justifyContent: 'center',
   },
   image: {
@@ -262,9 +302,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-evenly',
     alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
-    paddingBottom: 4,
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   iconButton: {
     width: 56,
@@ -318,12 +362,19 @@ const styles = StyleSheet.create({
   },
   fileNameInput: {
     borderWidth: 1,
-    borderColor: '#4b5563',
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
+  },
+  fileNameInputDark: {
+    borderColor: '#4b5563',
     color: '#f9fafb',
     backgroundColor: 'rgba(17,24,39,0.35)',
+  },
+  fileNameInputLight: {
+    borderColor: '#d1d5db',
+    color: '#111827',
+    backgroundColor: '#f9fafb',
   },
   optionRow: {
     flexDirection: 'row',
@@ -332,9 +383,14 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   optionLabel: {
-    color: '#d1d5db',
     fontSize: 12,
     width: 48,
+  },
+  optionLabelDark: {
+    color: '#d1d5db',
+  },
+  optionLabelLight: {
+    color: '#374151',
   },
   optionButtons: {
     flexDirection: 'row',
@@ -359,6 +415,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  optionButtonTextLight: {
+    color: '#374151',
+  },
   optionButtonTextActive: {
     color: '#fff',
   },
@@ -380,21 +439,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#1f2937',
   },
   modalTitle: {
-    color: '#fff',
     fontWeight: '700',
     fontSize: 16,
   },
+  modalTitleDark: {
+    color: '#fff',
+  },
+  modalTitleLight: {
+    color: '#111827',
+  },
   rangeLabel: {
-    color: '#d1d5db',
     fontSize: 12,
+  },
+  rangeLabelDark: {
+    color: '#d1d5db',
+  },
+  rangeLabelLight: {
+    color: '#4b5563',
   },
   sliderWrap: {
     marginTop: 2,
   },
   targetSizeText: {
-    color: '#e5e7eb',
     fontSize: 12,
     fontWeight: '600',
+  },
+  targetSizeTextDark: {
+    color: '#e5e7eb',
+  },
+  targetSizeTextLight: {
+    color: '#1f2937',
   },
   modalActions: {
     flexDirection: 'row',
@@ -429,6 +503,9 @@ const styles = StyleSheet.create({
   },
   rotate: {
     backgroundColor: '#7c3aed',
+  },
+  add: {
+    backgroundColor: '#0f766e',
   },
 });
 
