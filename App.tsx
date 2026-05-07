@@ -22,7 +22,7 @@ function App() {
     <GestureHandlerRootView style={{flex: 1}}>
       <SafeAreaProvider>
         <NavigationContainer>
-          <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+          <StatusBar barStyle={isDarkMode ?  'dark-content' :'light-content'} />
           <Stack.Navigator
             initialRouteName="Dashboard"
             screenOptions={{

@@ -71,6 +71,18 @@ def enableProguardInReleaseBuilds = false
  * this variant is about 6MiB larger per architecture than default.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+def appDisplayVersionFile = file("../../src/constants/appDisplayVersion.ts")
+def appDisplayVersionFileText = appDisplayVersionFile.text
+def versionMatcher = appDisplayVersionFileText =~ /APP_DISPLAY_VERSION\s*=\s*['"]([^'"]+)['"]/
+if (!versionMatcher.find()) {
+    throw new GradleException("APP_DISPLAY_VERSION not found in src/constants/appDisplayVersion.ts")
+}
+def versionCodeMatcher = appDisplayVersionFileText =~ /APP_VERSION_CODE\s*=\s*(\d+)/
+if (!versionCodeMatcher.find()) {
+    throw new GradleException("APP_VERSION_CODE not found in src/constants/appDisplayVersion.ts")
+}
+def appVersionName = versionMatcher.group(1)
+def appVersionCode = versionCodeMatcher.group(1).toInteger()
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -86,8 +98,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Bumped for new Play Store build
-        versionCode 3
-        versionName "1.0.2"
+        versionCode appVersionCode
+        versionName appVersionName
     }
     signingConfigs {
         debug {

@@ -1,6 +1,6 @@
 {
-  "name": "OCRapp",
-  "version": "0.0.1",
+  "name": "ScanSetu",
+  "version": "1.0.3",
   "private": true,
   "scripts": {
     "android": "react-native run-android",

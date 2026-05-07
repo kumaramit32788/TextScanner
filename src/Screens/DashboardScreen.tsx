@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import {MaterialIcons} from '@react-native-vector-icons/material-icons';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
+import {APP_DISPLAY_VERSION, APP_VERSION_CODE} from '../constants/appDisplayVersion';
 
 export type GroupedSavedItem = {
   id: string;
@@ -207,6 +208,11 @@ function DashboardScreen({
           )}
         </Pressable>
       </View>
+      <Text
+        style={[styles.versionLabel, isDarkMode && styles.versionLabelDark]}
+        accessibilityRole="text">
+        v{APP_DISPLAY_VERSION} ({APP_VERSION_CODE})
+      </Text>
     </SafeAreaView>
   );
 }
@@ -464,6 +470,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 3,
+  },
+  versionLabel: {
+    position: 'absolute',
+    left: 16,
+    bottom: 28,
+    fontSize: 12,
+    color: '#9ca3af',
+    fontVariant: ['tabular-nums'],
+  },
+  versionLabelDark: {
+    color: '#6b7280',
   },
 });
 
